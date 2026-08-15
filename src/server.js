@@ -23,10 +23,15 @@ import { checkSupabaseConnection } from './config/supabase.js'
 
 const app = express()
 const PORT = process.env.PORT || 3001
-const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173')
+const configuredOrigins = (process.env.CORS_ORIGIN || '')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean)
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://bims-frontend-two.vercel.app',
+  ...configuredOrigins,
+]
 
 // Middleware
 app.use(cors({
