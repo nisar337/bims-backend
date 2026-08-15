@@ -15,9 +15,11 @@ router.get('/heads', asyncHandler(async (req, res) => {
 
   // Sort so that 'Income' is at the very top
   const sorted = [...(data || [])].sort((a, b) => {
-    if (a.head_name.toLowerCase() === 'income') return -1
-    if (b.head_name.toLowerCase() === 'income') return 1
-    return a.head_name.localeCompare(b.head_name)
+    const aName = String(a.head_name || '')
+    const bName = String(b.head_name || '')
+    if (aName.toLowerCase() === 'income') return -1
+    if (bName.toLowerCase() === 'income') return 1
+    return aName.localeCompare(bName)
   })
 
   res.json(sorted)

@@ -99,7 +99,7 @@ router.get('/', asyncHandler(async (req, res) => {
     });
 
     const isOwnerAccount = account.account_type === 'Owner' || (account.bank_name && account.bank_name.toLowerCase().includes('owner'));
-    const isCashAccount = account.account_type === 'Cash' || account.account_name.toLowerCase().includes('cash in hand');
+    const isCashAccount = account.account_type === 'Cash' || String(account.account_name || '').toLowerCase().includes('cash in hand');
 
     const initialOpening = parseFloat(account.opening_balance) || 0;
     const calculatedOpening = initialOpening + priorDebits - priorCredits;

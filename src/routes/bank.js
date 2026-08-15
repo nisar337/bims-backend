@@ -40,7 +40,7 @@ router.get('/accounts', asyncHandler(async (req, res) => {
 
   // Compute live balance for Cash in Hand / Cash accounts
   const processed = await Promise.all((data || []).map(async (acc) => {
-    if (acc.account_type === 'Cash' || acc.account_name.toLowerCase().includes('cash in hand')) {
+    if (acc.account_type === 'Cash' || String(acc.account_name || '').toLowerCase().includes('cash in hand')) {
       const liveBal = await getLiveCashInHand(acc.id, acc.opening_balance)
       return { ...acc, current_balance: liveBal }
     }
@@ -49,9 +49,11 @@ router.get('/accounts', asyncHandler(async (req, res) => {
 
   // Sort so that 'Cash in Hand' / Cash accounts appear first
   const sorted = [...processed].sort((a, b) => {
-    if (a.account_type === 'Cash' || a.account_name.toLowerCase().includes('cash')) return -1
-    if (b.account_type === 'Cash' || b.account_name.toLowerCase().includes('cash')) return 1
-    return a.account_name.localeCompare(b.account_name)
+    const aName = String(a.account_name || '')
+    const bName = String(b.account_name || '')
+    if (a.account_type === 'Cash' || aName.toLowerCase().includes('cash')) return -1
+    if (b.account_type === 'Cash' || bName.toLowerCase().includes('cash')) return 1
+    return aName.localeCompare(bName)
   })
 
   res.json(sorted)
@@ -152,7 +154,7 @@ router.post('/transaction', verifyToken, asyncHandler(async (req, res) => {
 
   if (accountError) throw accountError
 
-  const isCashAccount = account.account_type === 'Cash' || account.account_name.toLowerCase().includes('cash in hand')
+  const isCashAccount = account.account_type === 'Cash' || String(account.account_name || '').toLowerCase().includes('cash in hand')
   const amountNum = parseFloat(amount)
 
   let baseBalance = parseFloat(account.current_balance || 0)
