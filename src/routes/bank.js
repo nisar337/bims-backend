@@ -4,13 +4,13 @@ import supabase from '../config/supabase.js'
 
 const router = express.Router()
 
-// Helper to compute live Cash in Hand balance from its ledger
-const getLiveCashInHand = async (cashAccountId, openingBalance = 0) => {
+// Compute live balance from opening balance + all ledger transactions
+const getLiveBankBalance = async (bankAccountId, openingBalance = 0) => {
   try {
     const { data: txs, error } = await supabase
       .from('bank_transactions')
       .select('amount, transaction_type')
-      .eq('bank_account_id', cashAccountId)
+      .eq('bank_account_id', bankAccountId)
 
     if (error) throw error
 
@@ -21,6 +21,18 @@ const getLiveCashInHand = async (cashAccountId, openingBalance = 0) => {
   } catch (err) {
     return parseFloat(openingBalance || 0)
   }
+}
+
+const syncAccountBalance = async (account) => {
+  if (!account?.id) return null
+
+  const liveBal = await getLiveBankBalance(account.id, account.opening_balance)
+  await supabase
+    .from('bank_accounts')
+    .update({ current_balance: liveBal, updated_at: new Date() })
+    .eq('id', account.id)
+
+  return liveBal
 }
 
 // Get all bank & cash accounts (excluding owner capital accounts by default)
@@ -38,13 +50,10 @@ router.get('/accounts', asyncHandler(async (req, res) => {
   const { data, error } = await query
   if (error) throw error
 
-  // Compute live balance for Cash in Hand / Cash accounts
+  // Always compute live balance from opening balance + transactions
   const processed = await Promise.all((data || []).map(async (acc) => {
-    if (acc.account_type === 'Cash' || String(acc.account_name || '').toLowerCase().includes('cash in hand')) {
-      const liveBal = await getLiveCashInHand(acc.id, acc.opening_balance)
-      return { ...acc, current_balance: liveBal }
-    }
-    return acc
+    const liveBal = await getLiveBankBalance(acc.id, acc.opening_balance)
+    return { ...acc, current_balance: liveBal }
   }))
 
   // Sort so that 'Cash in Hand' / Cash accounts appear first
@@ -157,10 +166,7 @@ router.post('/transaction', verifyToken, asyncHandler(async (req, res) => {
   const isCashAccount = account.account_type === 'Cash' || String(account.account_name || '').toLowerCase().includes('cash in hand')
   const amountNum = parseFloat(amount)
 
-  let baseBalance = parseFloat(account.current_balance || 0)
-  if (isCashAccount) {
-    baseBalance = await getLiveCashInHand(account.id, account.opening_balance)
-  }
+  const baseBalance = await getLiveBankBalance(account.id, account.opening_balance)
 
   const newBalance = transaction_type === 'Deposit' 
     ? baseBalance + amountNum
@@ -225,12 +231,31 @@ router.put('/transaction/:id', verifyToken, asyncHandler(async (req, res) => {
 
 // Delete bank transaction
 router.delete('/transaction/:id', verifyToken, asyncHandler(async (req, res) => {
+  const { data: tx, error: fetchError } = await supabase
+    .from('bank_transactions')
+    .select('bank_account_id')
+    .eq('id', req.params.id)
+    .single()
+
+  if (fetchError) throw fetchError
+
   const { error } = await supabase
     .from('bank_transactions')
     .delete()
     .eq('id', req.params.id)
 
   if (error) throw error
+
+  const { data: account, error: accountError } = await supabase
+    .from('bank_accounts')
+    .select('*')
+    .eq('id', tx.bank_account_id)
+    .single()
+
+  if (!accountError && account) {
+    await syncAccountBalance(account)
+  }
+
   res.json({ message: 'Bank transaction deleted' })
 }))
 
