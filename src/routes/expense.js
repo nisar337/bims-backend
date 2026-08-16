@@ -1,6 +1,7 @@
 import express from 'express'
 import { verifyToken, asyncHandler } from '../middleware/auth.js'
 import supabase from '../config/supabase.js'
+import { getDefaultCashAccount, getBankAccountById, isCashAccount } from '../utils/bank-account.js'
 
 const router = express.Router()
 
@@ -55,9 +56,18 @@ router.get('/head/:head_id', asyncHandler(async (req, res) => {
   res.json({ transactions: data, total })
 }))
 
-// Record expense transaction (deducts from Cash in Hand account if paid by cash)
+// Record expense transaction (deducts from Cash in Hand only when paid by cash)
 router.post('/transaction', verifyToken, asyncHandler(async (req, res) => {
-  const { expense_head_id, amount, transaction_date, description, reference_no, vendor_name } = req.body
+  const {
+    expense_head_id,
+    amount,
+    transaction_date,
+    description,
+    reference_no,
+    vendor_name,
+    bank_account_id,
+    skip_bank_sync
+  } = req.body
 
   if (!expense_head_id || !amount || !transaction_date) {
     return res.status(400).json({ error: 'Missing required fields' })
@@ -80,37 +90,36 @@ router.post('/transaction', verifyToken, asyncHandler(async (req, res) => {
 
   if (error) throw error
 
-  // Deduct from Cash in Hand account
-  try {
-    const { data: cashAccounts } = await supabase
-      .from('bank_accounts')
-      .select('*')
-      .eq('status', true)
-      .or('account_type.eq.Cash,account_name.ilike.%Cash in Hand%')
+  // Only touch Cash in Hand when expense is paid from cash (not from Bims/other bank accounts).
+  if (!skip_bank_sync) {
+    try {
+      const payingAccount = bank_account_id
+        ? await getBankAccountById(bank_account_id)
+        : await getDefaultCashAccount()
 
-    const cashAcc = cashAccounts && cashAccounts.length > 0 ? cashAccounts[0] : null
-    if (cashAcc) {
-      await supabase
-        .from('bank_transactions')
-        .insert([{
-          bank_account_id: cashAcc.id,
-          transaction_type: 'Withdrawal',
-          amount: amountNum,
-          transaction_date,
-          description: description || `Expense: ${vendor_name || 'Cash Outflow'}`,
-          reference_no: reference_no || `EXP-${data[0].id.slice(0, 4).toUpperCase()}`,
-          cheque_no: '',
-          created_by: req.user.id
-        }])
+      if (payingAccount && isCashAccount(payingAccount)) {
+        await supabase
+          .from('bank_transactions')
+          .insert([{
+            bank_account_id: payingAccount.id,
+            transaction_type: 'Withdrawal',
+            amount: amountNum,
+            transaction_date,
+            description: description || `Expense: ${vendor_name || 'Cash Outflow'}`,
+            reference_no: reference_no || `EXP-${data[0].id.slice(0, 4).toUpperCase()}`,
+            cheque_no: '',
+            created_by: req.user.id
+          }])
 
-      const newCashBal = (parseFloat(cashAcc.current_balance) || 0) - amountNum
-      await supabase
-        .from('bank_accounts')
-        .update({ current_balance: newCashBal, updated_at: new Date() })
-        .eq('id', cashAcc.id)
+        const newCashBal = (parseFloat(payingAccount.current_balance) || 0) - amountNum
+        await supabase
+          .from('bank_accounts')
+          .update({ current_balance: newCashBal, updated_at: new Date() })
+          .eq('id', payingAccount.id)
+      }
+    } catch (err) {
+      console.error('Warning: could not sync expense to Cash in Hand:', err.message)
     }
-  } catch (err) {
-    console.error('Warning: could not sync expense to Cash in Hand:', err.message)
   }
 
   res.status(201).json(data[0])
@@ -147,13 +156,7 @@ router.delete('/transaction/:id', verifyToken, asyncHandler(async (req, res) => 
 
   if (tx) {
     try {
-      const { data: cashAccounts } = await supabase
-        .from('bank_accounts')
-        .select('*')
-        .eq('status', true)
-        .or('account_type.eq.Cash,account_name.ilike.%Cash in Hand%')
-
-      const cashAcc = cashAccounts && cashAccounts.length > 0 ? cashAccounts[0] : null
+      const cashAcc = await getDefaultCashAccount()
       if (cashAcc) {
         const refTag = `EXP-${tx.id.slice(0, 4).toUpperCase()}`
         await supabase
