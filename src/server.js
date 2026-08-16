@@ -33,14 +33,29 @@ const allowedOrigins = [
   ...configuredOrigins,
 ]
 
+const isAllowedOrigin = (origin) => {
+  if (!origin) return true
+  if (allowedOrigins.includes(origin)) return true
+
+  try {
+    const { hostname, protocol } = new URL(origin)
+    if (protocol === 'https:' && hostname.endsWith('.vercel.app')) return true
+  } catch {
+    return false
+  }
+
+  return false
+}
+
 // Middleware
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (isAllowedOrigin(origin)) {
       return callback(null, true)
     }
 
-    return callback(new Error('Origin is not allowed by CORS'))
+    // Reject quietly; throwing here caused 500 responses in production.
+    return callback(null, false)
   }
 }))
 app.use(bodyParser.json())
